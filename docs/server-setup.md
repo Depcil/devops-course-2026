@@ -91,3 +91,57 @@ ClientAliveCountMax 2
 | `01-clean-install` | 2026-11-19 23:50, после установки ОС | `C:\WSL-snapshots\samartsev\01-clean-install.tar` |
 | `02-keys-configured` | 2026-11-20 00:07, после настройки ключевого входа | `C:\WSL-snapshots\samartsev\02-keys-configured.tar` |
 | `03-ssh-hardened` | 2026-11-20 00:30, после усиления SSH | `C:\WSL-snapshots\samartsev\03-ssh-hardened.tar` |
+| `04-nginx-https` | 2026-11-20 01:07, после настройки Nginx и HTTPS | `C:\WSL-snapshots\samartsev\04-nginx-https.tar` |
+
+## 8. Веб-сервер
+
+| Параметр | Значение |
+|---|---|
+| Пакет | `nginx` 1.24.0 из репозитория Ubuntu (`sudo apt install -y nginx`) |
+| Конфигурация ресурса | `/etc/nginx/sites-available/devops-site`, ссылка `/etc/nginx/sites-enabled/devops-site`; ссылка `sites-enabled/default` удалена |
+| Каталог ресурса | `/var/www/devops-site`, владелец `devops:devops`, каталог `755`, файлы `644` |
+| Сертификат | `/etc/ssl/certs/devops.crt`, `root:root`, `644`, срок 365 дней, SAN `DNS:devops.local` |
+| Закрытый ключ | `/etc/ssl/private/devops.key`, `root:root`, `600` |
+| Журналы | `/var/log/nginx/devops-site.access.log`, `/var/log/nginx/devops-site.error.log` |
+
+```bash
+sudo apt update && sudo apt install -y nginx
+sudo mkdir -p /var/www/devops-site && sudo chown -R devops:devops /var/www/devops-site
+sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout /etc/ssl/private/devops.key -out /etc/ssl/certs/devops.crt \
+  -subj "/CN=devops.local" -addext "subjectAltName=DNS:devops.local"
+sudo ln -s /etc/nginx/sites-available/devops-site /etc/nginx/sites-enabled/
+sudo rm /etc/nginx/sites-enabled/default
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+Текст `/etc/nginx/sites-available/devops-site`:
+
+```nginx
+server {
+    listen 80;
+    listen [::]:80;
+    server_name devops.local;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name devops.local;
+    ssl_certificate     /etc/ssl/certs/devops.crt;
+    ssl_certificate_key /etc/ssl/private/devops.key;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+
+    root /var/www/devops-site;
+    index index.html;
+    location / {
+        try_files $uri $uri/ =404;
+    }
+    error_page 404 /404.html;
+    access_log /var/log/nginx/devops-site.access.log;
+    error_log  /var/log/nginx/devops-site.error.log;
+}
+```
+
+Содержимое доставляется с хоста сценарием `scripts/deploy.sh` (rsync с `--delete --chmod=D755,F644`). На хосте (Git Bash) rsync 3.4.4 установлен из пакетов MSYS2 в `~/bin`; сертификат для проверки — `~/devops.crt` (`scp devops:/etc/ssl/certs/devops.crt ~/devops.crt`).
